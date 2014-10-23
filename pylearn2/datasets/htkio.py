@@ -20,7 +20,7 @@ Liu <yulan.liu.wings@foxmail.com> for extended use.
 Last update made on 23 Oct 2014.
 """
 
-__author__ = "David Huggins-Daines <dhuggins@cs.cmu.edu>; Yulan liu <yulan.liu@foxmail.com>"
+__author__ = "David Huggins-Daines <dhuggins@cs.cmu.edu>; Yulan liu <yulan.liu.wings@foxmail.com>"
 __version__ = "$Revision y0 $"
 
 from struct import unpack, pack
