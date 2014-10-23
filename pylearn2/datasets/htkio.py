@@ -3,17 +3,24 @@
 # You may copy and modify this freely under the same terms as
 # Sphinx-III
 #
-# Modified by Yulan Liu for Sheffield MINI group. (26 June 2014)
-# Last updated: 5 August 2014, by Yulan Liu.
 
-"""Read and write HTK feature files.
+"""
+Read and write files related to HTK formate, including feature files,
+scp files, mlf files and mlist files. It is supposed to be an interface
+to convert HTK format based data into hdf5 format.
 
-This module reads and writes the acoustic feature files used by HTK
+It originates from David Huggins-Daines <dhuggins@cs.cmu.edu>, with 
+original version available on the following link:
 
-It is modified by Yulan Liu for extended usage. Last update on 23 Oct 2014.
+	https://sphinx-am2wfst.googlecode.com/hg/t3sphinx/htkmfc.py
+
+This file is a modification based on that version developed by Yulan Liu
+<yulan.liu.wings@foxmail.com> for extended use. 
+
+Last update made on 23 Oct 2014.
 """
 
-__author__ = "David Huggins-Daines <dhuggins@cs.cmu.edu>; Yulan liu <acp12yl@sheffield.ac.uk>"
+__author__ = "David Huggins-Daines <dhuggins@cs.cmu.edu>; Yulan liu <yulan.liu@foxmail.com>"
 __version__ = "$Revision y0 $"
 
 from struct import unpack, pack
