@@ -5,7 +5,7 @@
 #
 
 """
-Read and write files related to HTK formate, including feature files,
+Read and write files related to HTK format, including feature files,
 scp files, mlf files and mlist files. It is supposed to be an interface
 to convert HTK format based data into hdf5 format.
 
@@ -14,8 +14,8 @@ original version available on the following link:
 
 	https://sphinx-am2wfst.googlecode.com/hg/t3sphinx/htkmfc.py
 
-This file is a modification based on that version developed by Yulan Liu
-<yulan.liu.wings@foxmail.com> for extended use. 
+This file is a modification based on that version developed by Yulan 
+Liu <yulan.liu.wings@foxmail.com> for extended use. 
 
 Last update made on 23 Oct 2014.
 """
