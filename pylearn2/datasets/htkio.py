@@ -525,9 +525,11 @@ def write_mlist(mlist_file=None, mlist=[]):
     return 0
 
 
-def read_mlf_htk(mlf_filename=None, mlist=[]):
+def read_mlf_htk(mlf_filename=None, mlist=None, hdf5_filename=None):
     '''
-    Read labels in the HTK mlf file. It returns an mlfdict:
+    Read labels in the HTK mlf file. If the hdf5_filename is given, it
+    will save the information into a temporal hdf5 file, otherwise it 
+    will return an mlfdict:
 
 
     mlfdict -- 'seg' -- seg1 (string) -- labels (numpy array in bool)
@@ -547,6 +549,15 @@ def read_mlf_htk(mlf_filename=None, mlist=[]):
     and will be saved into mlfdict['mlistdict'] and 
     mlfdict['mlistdict_inv'].
     ''' 
+
+    assert isinstance(mlf_filename, str)
+    assert (isinstance(mlist, list) or isinstance(mlist, set))
+    if (hdf5_filename==None) or (not isinstance(hdf5_filename, str)):
+	hdf5_flag = False
+    else:
+	hdf5_flag = True
+	hdf5_fid = h5py.File(hdf5_filename, 'w')
+
     i = 0
     mlfdict = dict()
     mlfdict['mlistdict'] = dict()
@@ -555,6 +566,21 @@ def read_mlf_htk(mlf_filename=None, mlist=[]):
 	mlfdict['mlistdict'][m] = i
 	mlfdict['mlistdict_inv'][i] = m
 	i += 1
+
+    if hdf5_flag:
+	# Write mlist information int hdf5 file
+	md = hdf5_fid.create_group('mlistdict')
+	md_inv = hdf5_fid.create_group('mlistdict_inv')
+	for phone in mlfdict['mlistdict'].keys():
+	    index = mlfdict['mlistdict'][phone]
+	    tmp = md.create_dataset(phone, shape=(1,), dtype='i')
+	    tmp[...] = index
+	    dt = h5py.special_dtype(vlen=bytes)
+	    tmp_inv = md_inv.create_dataset(str(index), shape=(1,), dtype=dt)
+	    tmp_inv[...] = phone
+	# Follow the same structure with mlfdict.
+	hdf5_segs = hdf5_fid.create_group('seg')
+
 
     Nmlist = len(mlist)
     fid = open(mlf_filename, 'r')
@@ -592,63 +618,163 @@ def read_mlf_htk(mlf_filename=None, mlist=[]):
 		accuracy or speed and final performance.
 		"""
 		# Using bool
-		mlfdict['seg'][seg] = numpy.array(Y, dtype=numpy.bool)
+		tmp_data = numpy.array(Y, dtype=numpy.bool)
+		if hdf5_flag:
+		    # Write into temporal hdf5 file
+		    try:
+		    	tmp = hdf5_segs.create_dataset(seg, shape=tmp_data.shape, dtype=tmp_data.dtype)
+		        tmp[...] = tmp_data
+		    except ValueError:
+			print 'Warning! Duplicated segment: "'+seg+'", only the\
+				information from first read is kept.'
+		else:
+		    # Buffer in mlfdict at a price of memory consumption
+		    mlfdict['seg'][seg] = tmp_data
 	else:
-	    [sf, ef, m] = line.split()
-	    sf = int(round(int(sf)/HTK_UNIT))
-	    ef = int(round(int(ef)/HTK_UNIT))
+	    [sf, ef, m] = line.split()[:3]
+	    sf = int(round(int(sf)*1.0/HTK_UNIT))
+	    ef = int(round(int(ef)*1.0/HTK_UNIT))
 	    tmp = [0] * Nmlist 
 	    tmp[mlfdict['mlistdict'][m]] = 1
 	    if (ef-sf)==0:
 		print 'Warning: igore "' + line + '" because of zero duration.'
 	    else:
 		Y += [tmp] * (ef-sf)
+
     fid.close()
-    return mlfdict
+    if hdf5_flag:
+	hdf5_fid.close()
+	return 0
+    else:
+        return mlfdict
 
 
-def write_mlf_htk(mlf_filename=None, mlfdict=None, EXT='.rec'):
+def write_mlf_htk(mlf_filename=None, mlfdict=None, EXT='.rec', hdf5mlf_filename=None):
     '''
     Write/create an HTK mlf file according to the information for
     segments (mlfdict['seg']), labels and mlist (mlfdict['mlistdict']
     and mlfdict['mlistdict_inv']) incorporated in the mlfdict. By 
     default ".rec" is used for filename extension.
+
+    The input could be mlfdict or temporal hdf5 formatted mlf file.
     '''
+    assert isinstance(mlf_filename, str)
+    if (not isinstance(mlfdict, dict)) and (not isinstance(hdf5mlf_filename, str)):
+	print 'Error! Either give an mlfdict or an HDF5 formatted mlf as input, \
+		otherwise there is no data to write!'
+	return 1
+
+    if isinstance(mlfdict, dict):
+	hdf5_flag = False
+    elif isinstance(hdf5mlf_filename, str):
+	hdf5_flag = True
+
     fid = open(mlf_filename, 'w')
     fid.write('#!MLF!#\n')
     HTK_UNIT = 100000
 
-    for seg in sorted(mlfdict['seg'].keys()):
-	fid.write('"*/' + seg + EXT + '"\n')
-	data = mlfdict['seg'][seg]
+    if hdf5_flag:
+	hdf5_fid = h5py.File(hdf5mlf_filename, 'r')
+	sourcedict = hdf5_fid
+    else:
+	sourcedict = mlfdict
+
+    for seg in sorted(sourcedict['seg'].keys()):
+	fid.write('"*/' + str(seg) + EXT + '"\n')
 	sf = 0
 	ef = 0
 	buf = []
 	startflag = False
+	if hdf5_flag:
+	    print 'Reading segment: ', seg
+	    # NOTE!!! It is very important to use ".value" here to reduce the HDF5 reading time!
+	    data = sourcedict['seg'][seg].value
+	else:
+	    data = sourcedict['seg'][seg]
 	for fm in data:
 	    try:
 		if all(fm==buf[-1]):
 		    buf.append(fm)
 		    startflag = True
 		else:
-		    fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + mlfdict['mlistdict_inv'][buf[-1].argmax()] + '\n')
+		    if hdf5_flag:
+			index = str(buf[-1].argmax())
+			fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + sourcedict['mlistdict_inv'][index].value[0] + '\n')
+		    else:
+			index = buf[-1].argmax()
+			fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + sourcedict['mlistdict_inv'][index] + '\n')
 		    buf = []
 		    sf = ef
 		    startflag = False
 	    except IndexError:
 		buf.append(fm)
 	    ef += 1
-	fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + mlfdict['mlistdict_inv'][buf[-1].argmax()] + '\n')
+
+	if hdf5_flag:
+	    index = str(buf[-1].argmax())
+	    fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + sourcedict['mlistdict_inv'][index].value[0] + '\n')
+	else:
+	    index = buf[-1].argmax()
+	    fid.write(str(sf*HTK_UNIT) + ' ' + str(ef*HTK_UNIT) + ' ' + sourcedict['mlistdict_inv'][index] + '\n')
 	fid.write('.\n')
+    fid.close()
+    if hdf5_flag:
+	hdf5_fid.close()
+    return 0
+
+def write_mlf_hdf5(hdf5_filename=None, mlfdict=None, over_write=False):
+    '''
+    Write label information into an hdf5 file. This function avoids
+    buffering all the information in mlf in memory. It can be used
+    to save label/target information in a temporal hdf5 for fast
+    access later.
+
+    If the hdf5 exist already, by default this function will append
+    to the existing hdf5 file without over-writing existing data.
+    To enable false over-writing, set "over_write=True".
+    '''
+    assert isinstance(hdf5_filename, str)    
+    assert isinstance(mlfdict, dict)
+
+    try:
+	open(hdf5_filename, 'r')
+	if over_write==False:
+	    print 'HDF5 file "' + hdf5_filename + '" exists already, \
+		appending data rather than over-writing. If you \
+		don\'t want this, set over_write=True.'
+	    fid = h5py.File(hdf5_filename, 'a')
+	else:
+	    print 'HDF5 file "' + hdf5_filename + '" exists already, \
+                over-writing it now. If you don\'t want over-writing,\
+		set over_write=False.'
+            fid = h5py.File(hdf5_filename, 'w')
+    except IOError:
+	print 'Create HDF file "' + hdf5_filename + '", start \
+		writing data...'
+	fid = h5py.File(hdf5_filename, 'w')
+    for seg in sorted(mlfdict.keys()):
+	data = mlfdict[seg]
+	dset = fid.create_dataset(seg, shape=(1,len(data)), dtype='b')
+	dset[:] = data[:]
+
     fid.close()
     return 0
 
-def write_mlf_hdf5(filename=None, mlfdict=None):
+def read_hdf5mlf(hdf5_filename=None):
     '''
-    Write label information into an hdf5 file.
+    Reading mlf target from hdf5 file, and return an mlfdict.
     '''
-    raise NotImplementedError
-
+    assert isinstance(hdf5_filename, str)
+    fid = h5py.File(hdf5_filename, 'r')
+    mlfdict = dict()
+    for seg in fid.keys():
+	try:
+	    mlfdict[seg]
+	    print 'Warning! Duplicated data for segment:\n\t' + seg + '\n \
+		Only keep the firstly read one.'
+	except KeyError:
+	    mlfdict[seg] = fid[seg].value
+    return mlfdict
 
 class HTKFeat_read_via_scp(object):
     '''
@@ -731,16 +857,42 @@ class HTKFeat_to_hdf5_via_scp(object):
 
     hdf5_filename	Full path of the hdf5 file to write into.
 
+    hdf5mlf_filename	(Optional) Full path for the HDF5 file to store mlf
+			information so that we don't need to buffer a large
+			mlfdict when the dataset is large. If no file path
+			is given, the mlf information will be buffered in a
+			mlfdict.
 
     '''
-    def __init__(self, scp_filename=None, mlf_filename=None, mlist_filename=None, hdf5_filename=None):
+    def __init__(self, scp_filename=None, mlf_filename=None, mlist_filename=None, hdf5_filename=None, hdf5mlf_filename=None):
 	'''
 	The scp file is opened but HTK feature data is not read yet.
 	The mlist file and mlf file are read with relevant information
 	buffered already.
 	'''
 	self.read_mlist(mlist_filename)
-	self.read_mlf(mlf_filename, self.mlist)
+
+	if not mlf_filename==None:
+	    self.readmlf_flag = True
+	    print '\nNeed to read HTK formatted mlf file: ', mlf_filename
+	    assert isinstance(mlf_filename, str)
+
+	    if hdf5mlf_filename==None:
+		self.hdf5mlf_flag = False
+		print 	'\nReading HTK formatted mlf into buffer directly, this might use a lot of memory if your dataset is large.'
+		self.read_mlf(mlf_filename=mlf_filename, mlist=self.mlist)
+	    else:
+		self.hdf5mlf_flag = True
+	    	print 	'\nReading HTK formatted mlf file, convert to an HDF5 file, to reduce buffer memory usage and faster access later.'
+		assert isinstance(hdf5mlf_filename, str)
+		self.read_mlf(mlf_filename=mlf_filename, mlist=self.mlist, hdf5mlf_filename=hdf5mlf_filename)
+	else:
+	    self.readmlf_flag = False
+	    print '\nAssume that mlf file has been already converted into HDF5 format in file: ', hdf5mlf_filename
+	    assert isinstance(hdf5mlf_filename, str)
+	    self.hdf5mlf_flag = True
+	    self.read_mlf(mlist=self.mlist, hdf5mlf_filename=hdf5mlf_filename)
+
 	self.open_scp(scp_filename)
 	self.open_hdf5(hdf5_filename)
 
@@ -750,14 +902,48 @@ class HTKFeat_to_hdf5_via_scp(object):
 	self.mlist = set(read_mlist(mlist_filename=mlist_filename))
 	return 0
 
-    def read_mlf(self, mlf_filename=None, mlist=None):
-	assert isinstance(mlf_filename, str)
-	assert (isinstance(mlist, set) or (isinstance(mlist, list)))
-	if (isinstance(mlist, list) and (not len(mlist))==len(set(mlist))):
-	    print 'Error! Provided mlist has duplicated labels!'
-	    return 1
-	self.mlf_filename = mlf_filename
-	self.mlfdict = read_mlf_htk(mlf_filename=mlf_filename, mlist=mlist)
+    def read_mlf(self, mlf_filename=None, mlist=None, hdf5mlf_filename=None):
+	'''
+	Read mlf file and buffer the targets information into memory.
+	Note that even though bool is used rather than int or float,
+	this function may still use a lot of memory for larger dataset,
+	as for each frame it will need one bool frame. Thus this 
+	function is only recommended for small dataset to save time at
+	the price of memory comsumption. For large dataset, please use
+	function "read_mlf2hdf", which will save the read data into a
+	temporal hdf5 for fast access later.
+	'''
+	if not mlf_filename==None:
+	    # Need to read HTK formatted mlf file.
+	    assert isinstance(mlf_filename, str)
+	    assert (isinstance(mlist, set) or (isinstance(mlist, list)))
+	    if (isinstance(mlist, list) and (not len(mlist))==len(set(mlist))):
+	    	print 'Error! Provided mlist has duplicated labels!'
+	    	return 1
+	    self.mlf_filename = mlf_filename
+	    if hdf5mlf_filename==None:
+		# Read HTK formatted mlf file, and buffer it into memory
+	    	self.hdf5mlf_flag = False
+	    	self.mlfdict = read_mlf_htk(mlf_filename=mlf_filename, mlist=mlist)
+	    else:
+		# Read HTK formatted mlf file, save into a temporal HDF5 and then read from HDF5 file
+	    	self.hdf5mlf_flag = True
+	    	assert isinstance(hdf5mlf_filename, str)
+	    	read_mlf_htk(mlf_filename=mlf_filename, mlist=mlist, hdf5_filename=hdf5mlf_filename)
+	    	self.hdf5mlf_fid = h5py.File(hdf5mlf_filename, 'r') 
+	    return 0
+	else:
+	    # Read from HDF5 formatted mlf file
+	    assert isinstance(hdf5mlf_filename, str)
+            self.hdf5mlf_fid = h5py.File(hdf5mlf_filename, 'r')
+	    return 0
+
+    def read_mlf2hdf5(self, mlf_filename=None, mlist=None, mlf_hdf5=None):
+	'''
+	Read mlf file and save the target in a temporal hdf5 file for
+	fast access later.
+	'''
+
 	return 0
 
     def open_scp(self, scp_filename=None):
@@ -771,8 +957,7 @@ class HTKFeat_to_hdf5_via_scp(object):
 	self.hdf5_filename = hdf5_filename
         try:
             fid = open(self.hdf5_filename, 'r')
-            print 'Warning! The hdf5 file to write is already existing! \
-                It is going to be removed now.'
+            print '\nWarning! The hdf5 file "' + self.hdf5_filename + '" to write is already existing! It is going to be removed now.'
             fid.close()
             os.remove(self.hdf5_filename)
         except:
@@ -815,7 +1000,8 @@ class HTKFeat_to_hdf5_via_scp(object):
 	    print '\nWarning: reach the end of the file! ', self.scp_filename
 	    self.scp_fid.close()
 	    return 1
-	
+
+	print 'Reading feature file: ', uttfile
 	self.htkfea_read = HTKFeat_read(filename=uttfile)
 	'''
 	Only write the data corresponding to some segments. To read
@@ -843,8 +1029,23 @@ class HTKFeat_to_hdf5_via_scp(object):
 	    self.dset_x = self.hdf5.create_dataset('x', shape=(nSamples, veclen), maxshape=(None, None), dtype='f', chunks=(512, 512))
 	    self.dset_y = self.hdf5.create_dataset('yarray', shape=(nSamples,len(self.mlist)), maxshape=(None, None), dtype='b', chunks=(512, 512))
 
-	self.dset_x[-nSamples:] = data
-	self.dset_y[-nSamples:] = self.mlfdict['seg'][uttname.split('.')[0].split('/')[-1]][:-1]
+	seg = uttname.split('.')[0].split('/')[-1]
+	print 'Fetching target for segment: ', seg
+
+	if self.hdf5mlf_flag:
+	    try:
+	    	self.dset_y[-nSamples:] = self.hdf5mlf_fid['seg'][seg].value[:-1]
+	    except KeyError:
+		print '\nWarning! No targets found for segment: ', seg, '\n\tSkipping it for now.'
+	else:
+	    try:
+	    	self.dset_y[-nSamples:] = self.mlfdict['seg'][seg][:-1]
+	    except KeyError:
+		print '\nWarning! No targets found for segment: ', seg, '\n\tSkipping it for now.'
+
+	# Write the feature data only when there are targets found.
+        self.dset_x[-nSamples:] = data
+
 	return 0
 
     def convert_all(self):
@@ -854,6 +1055,7 @@ class HTKFeat_to_hdf5_via_scp(object):
 	stop_flag = 0
 	while not stop_flag:
 	    stop_flag = self.convert_next()	
+	self.hdf5mlf_fid.close()
 	return 0
 
     def close(self):
